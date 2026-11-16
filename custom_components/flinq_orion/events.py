@@ -24,6 +24,8 @@ LIFECYCLE_KINDS = frozenset(
         "battery_state",
         "node_address",
         "relay_fallback",
+        "request_retry",
+        "request_timeout",
     }
 )
 

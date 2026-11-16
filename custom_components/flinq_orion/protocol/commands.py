@@ -14,6 +14,8 @@ class CommandChannel:
         self.send = send
         self.lock = asyncio.Lock()
         self.pending: tuple[Callable[[object], bool], asyncio.Future] | None = None
+        # Called with the attempt number when an attempt timed out and another one follows.
+        self.on_retry: Callable[[int], None] | None = None
 
     def receive(self, response: object) -> bool:
         if self.pending:
@@ -45,6 +47,8 @@ class CommandChannel:
                 except TimeoutError as err:
                     if attempt == retries:
                         raise MeshTimeoutError("No matching response") from err
+                    if self.on_retry:
+                        self.on_retry(attempt + 1)
                 finally:
                     self.pending = None
                     if not future.done():

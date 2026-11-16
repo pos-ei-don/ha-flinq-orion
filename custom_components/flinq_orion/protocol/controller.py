@@ -56,6 +56,9 @@ class MeshController:
         self.send_proxy, self.on_response, self.log = send_proxy, on_response, log
         self.receiver = AccessReceiver(app_key, device_key)
         self.channel = CommandChannel(self.send_access)
+        self.channel.on_retry = lambda attempt: self.log(
+            {"kind": "request_retry", "dst": self.destination, "attempt": attempt}
+        )
         self.wire_lock = asyncio.Lock()
         self.rx_lock = asyncio.Lock()
         self.network_dedup = ReplayWindow(limit=256)

@@ -13,6 +13,13 @@ from .device_profiles import ORION_DPS, FLINQ_ORION_FQC8274_PROFILE as PROFILE
 
 # work_mode (DP 2) enum indices from the schema.
 LIGHT_MODES = {"white": 0, "color": 1, "scene": 2}
+# SIG set commands carry a TID, so the lamp treats a resend within 6 s as the same transaction
+# (Mesh Model 1.1, 3.3.1.2.2). The lamp that carries the link sometimes leaves the first one
+# or two requests after a fresh connection unanswered, while the other lamp answers at once
+# over the same link (seen on two FlinQ Gaia lamps). One long 15 s wait then fails the whole
+# Home Assistant call. Short attempts with the same payload get the command through instead.
+SIG_SET_TIMEOUT = 2.5
+SIG_SET_RETRIES = 2
 
 
 class OrionDevice:
@@ -271,6 +278,14 @@ class OrionDevice:
             )
             return response
         except MeshTimeoutError:
+            self.coordinator.record(
+                {
+                    "kind": "request_timeout",
+                    "opcode": opcode,
+                    "dst": destination,
+                    "retries": retries,
+                }
+            )
             if discovery:
                 raise
             self.coordinator.data["command_failures"] = (
@@ -447,6 +462,8 @@ class OrionDevice:
             payload,
             0x8204,
             model=0x1000,
+            timeout=SIG_SET_TIMEOUT,
+            retries=SIG_SET_RETRIES,
             access_match=lambda data: (
                 len(data) in (1, 3) and data[1 if len(data) == 3 else 0] == int(on)
             ),
@@ -466,6 +483,8 @@ class OrionDevice:
             + bytes((await self.next_tid(), 0, 0)),
             0x824E,
             model=0x1300,
+            timeout=SIG_SET_TIMEOUT,
+            retries=SIG_SET_RETRIES,
             access_match=lambda data: (
                 len(data) in (2, 5)
                 and int.from_bytes(data[2:4] if len(data) == 5 else data[:2], "little") == level
@@ -495,6 +514,8 @@ class OrionDevice:
             + bytes((await self.next_tid(), 0, 0)),
             0x8266,
             model=0x1306,
+            timeout=SIG_SET_TIMEOUT,
+            retries=SIG_SET_RETRIES,
             access_match=lambda data: (
                 len(data) in (4, 9)
                 and int.from_bytes(data[4:6] if len(data) == 9 else data[:2], "little") == kelvin
@@ -527,6 +548,8 @@ class OrionDevice:
             + bytes((await self.next_tid(), 0, 0)),
             0x8278,
             model=0x1307,
+            timeout=SIG_SET_TIMEOUT,
+            retries=SIG_SET_RETRIES,
             access_match=lambda data: (
                 len(data) in (6, 7)
                 and data[:6] == b"".join(n.to_bytes(2, "little") for n in values)
