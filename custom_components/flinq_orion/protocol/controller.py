@@ -237,6 +237,25 @@ class MeshController:
             finally:
                 self.device_command = False
 
+    def _dropped(self, reason, msg):
+        """Keep a silently discarded message in the connection history while a request waits.
+
+        Tells a lamp that did not answer apart from an answer we threw away. Only logged while a
+        request is pending, so relayed duplicates do not flood the history.
+        """
+        if self.channel.pending is None:
+            return
+        self.log(
+            {
+                "kind": "rx_dropped",
+                "reason": reason,
+                "src": msg.src,
+                "dst": msg.dst,
+                "seq": msg.seq,
+                "waiting_for": self.destination,
+            }
+        )
+
     @property
     def request_lock(self):
         if not hasattr(self, "_request_lock"):
@@ -265,6 +284,7 @@ class MeshController:
             if kind == 2:
                 # Config responses may originate at the selected mesh proxy server.
                 if not await self.replay.accept(msg.iv_index, msg.src, msg.seq):
+                    self._dropped("replay_proxy_config", msg)
                     return
                 if len(msg.lower) == 4 and msg.lower[0] == 3 and self.filter_future:
                     future, (kind_expected, count) = self.filter_future
@@ -273,6 +293,7 @@ class MeshController:
                         future.set_result(msg.src)
                 return
             if msg.src not in self.allowed_sources:
+                self._dropped("unknown_source", msg)
                 return
             # Messages to other destinations (published reports) are read, never acknowledged.
             for_us = msg.dst == self.source
@@ -280,6 +301,7 @@ class MeshController:
                 return  # Foreign segment ACKs and DeviceKey traffic are not ours to read.
             if msg.ctl:
                 if not await self.replay.accept(msg.iv_index, msg.src, msg.seq):
+                    self._dropped("replay_control", msg)
                     return
                 if msg.lower and msg.lower[0] == 0:
                     zero, block, obo = decode_ack(msg.lower)
@@ -309,6 +331,7 @@ class MeshController:
                     )
                     return
                 if not self.replay.begin(msg.iv_index, msg.src, seq_auth):
+                    self._dropped("replay_segment", msg)
                     return
             access = self.receiver.receive(msg)
             ack = self.receiver.ack_info
@@ -318,6 +341,7 @@ class MeshController:
             seq_auth, device = self.receiver.last_completed
             cache_key = msg.iv_index, msg.src, seq_auth
             if not await self.replay.accept(msg.iv_index, msg.src, seq_auth):
+                self._dropped("replay_access", msg)
                 # Re-ACK a retransmitted completed message from this live session.
                 if ack and cache_key in self.completed and msg.iv_index == self.iv_index:
                     await self._network(segment_ack(ack[0], ack[1]), ctl=True, destination=msg.src)

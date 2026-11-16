@@ -26,6 +26,7 @@ LIFECYCLE_KINDS = frozenset(
         "relay_fallback",
         "request_retry",
         "request_timeout",
+        "rx_dropped",
     }
 )
 

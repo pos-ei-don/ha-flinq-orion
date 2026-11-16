@@ -100,3 +100,44 @@ async def test_set_power_failure_is_recorded_after_all_attempts():
         await d.set_power(True)
     kinds = [call.args[0]["kind"] for call in c.record.call_args_list]
     assert "request_timeout" in kinds
+
+
+@pytest.mark.asyncio
+async def test_discarded_answer_is_logged_only_while_a_request_waits():
+    from test_active_mesh import make_system
+
+    from custom_components.flinq_orion.protocol.transport import ReplayWindow
+
+    peer, controller, device, allocator, replay = await make_system()
+    await device.query()
+    old = list(peer.responses)
+    controller.log.reset_mock()
+
+    def dropped():
+        return [
+            call.args[0]
+            for call in controller.log.call_args_list
+            if call.args[0].get("kind") == "rx_dropped"
+        ]
+
+    controller.network_dedup = ReplayWindow(limit=256)
+    controller.completed.clear()
+    for kind, pdu in old:  # nobody waits: replayed messages stay out of the history
+        await controller.receive(kind, pdu)
+    assert dropped() == []
+
+    # A fresh link starts with an empty network dedup window, while replay protection is
+    # persistent: an answer the replay window rejects would vanish without a trace.
+    controller.network_dedup = ReplayWindow(limit=256)
+    controller.completed.clear()  # a new link also starts without cached segment ACKs
+    controller.channel.pending = (
+        lambda response: False,
+        asyncio.get_running_loop().create_future(),
+    )
+    for kind, pdu in old:
+        await controller.receive(kind, pdu)
+    controller.channel.pending = None
+    reasons = {record["reason"] for record in dropped()}
+    assert reasons and reasons <= {"replay_access", "replay_segment", "replay_control"}
+    assert all(record["src"] == 176 for record in dropped())
+    await peer.finish()
