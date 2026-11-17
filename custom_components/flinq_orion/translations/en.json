@@ -114,7 +114,8 @@
           "data": {
             "name": "Lamp name",
             "node_address": "Mesh unicast address (decimal, 0 = detect)",
-            "device_key": "DeviceKey (optional, 32 hex characters)"
+            "device_key": "DeviceKey (optional, 32 hex characters)",
+            "preferred_proxy": "Preferred Bluetooth access point (connect through this lamp whenever it is reachable)"
           }
         }
       },

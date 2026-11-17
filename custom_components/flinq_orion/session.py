@@ -308,11 +308,17 @@ class MeshSession:
         """
         if direct or lamp.node_address is None:
             return lamp
-        candidates = [lamp] + sorted(
+        others = sorted(
             (other for other in self.lamps if other is not lamp),
             key=lambda other: other.last_monotonic,
             reverse=True,
         )
+        # A lamp marked as preferred carries the link whenever it is reachable. Some lamps
+        # leave the first requests after a fresh connection unanswered while they carry
+        # the link (seen on a FlinQ Gaia: the first two requests, every time); routing
+        # through another lamp avoids that wait.
+        preferred = [c for c in [lamp, *others] if c.entry.options.get("preferred_proxy")]
+        candidates = preferred + [c for c in [lamp, *others] if c not in preferred]
         for candidate in candidates:
             if bluetooth.async_ble_device_from_address(
                 self.hass, candidate.address, connectable=True

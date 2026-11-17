@@ -114,7 +114,8 @@
           "data": {
             "name": "Naam van de lamp",
             "node_address": "Mesh-unicastadres (decimaal, 0 = herkennen)",
-            "device_key": "DeviceKey (optioneel, 32 hextekens)"
+            "device_key": "DeviceKey (optioneel, 32 hextekens)",
+            "preferred_proxy": "Voorkeurs-Bluetooth-toegangspunt (verbind via deze lamp zodra hij bereikbaar is)"
           }
         }
       },

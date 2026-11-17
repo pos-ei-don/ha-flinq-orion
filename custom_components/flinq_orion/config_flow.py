@@ -622,6 +622,9 @@ class LampFlow(PairingSteps, config_entries.ConfigSubentryFlow):
             if not errors:
                 data = {**subentry.data, "node_address": node}
                 data.pop("device_key", None)
+                data.pop("preferred_proxy", None)
+                if user_input.get("preferred_proxy"):
+                    data["preferred_proxy"] = True
                 if device_key:
                     data["device_key"] = device_key
                 node_changed = node != subentry.data.get("node_address")
@@ -647,6 +650,10 @@ class LampFlow(PairingSteps, config_entries.ConfigSubentryFlow):
                         ): selector.TextSelector(
                             selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                         ),
+                        vol.Optional(
+                            "preferred_proxy",
+                            default=bool(subentry.data.get("preferred_proxy", False)),
+                        ): bool,
                     }
                 ),
             ),
