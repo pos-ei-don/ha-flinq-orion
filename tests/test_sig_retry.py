@@ -103,7 +103,7 @@ async def test_set_power_failure_is_recorded_after_all_attempts():
 
 
 @pytest.mark.asyncio
-async def test_discarded_answer_is_logged_only_while_a_request_waits():
+async def test_discarded_answers_are_summarised_once_per_request():
     from test_active_mesh import make_system
 
     from custom_components.flinq_orion.protocol.transport import ReplayWindow
@@ -120,24 +120,36 @@ async def test_discarded_answer_is_logged_only_while_a_request_waits():
             if call.args[0].get("kind") == "rx_dropped"
         ]
 
-    controller.network_dedup = ReplayWindow(limit=256)
-    controller.completed.clear()
-    for kind, pdu in old:  # nobody waits: replayed messages stay out of the history
+    # Nobody waits: neither duplicates nor replayed messages are counted.
+    for kind, pdu in old:
         await controller.receive(kind, pdu)
+    controller._drop_summary(176)
     assert dropped() == []
 
-    # A fresh link starts with an empty network dedup window, while replay protection is
-    # persistent: an answer the replay window rejects would vanish without a trace.
-    controller.network_dedup = ReplayWindow(limit=256)
-    controller.completed.clear()  # a new link also starts without cached segment ACKs
     controller.channel.pending = (
         lambda response: False,
         asyncio.get_running_loop().create_future(),
     )
+    # 1) Duplicate of a message seen before: the network dedup window rejects it.
     for kind, pdu in old:
         await controller.receive(kind, pdu)
+    # 2) Fresh link: empty dedup window and segment ACK cache, persistent replay protection.
+    controller.network_dedup = ReplayWindow(limit=256)
+    controller.completed.clear()
+    for _ in range(30):  # many discards still give one record
+        for kind, pdu in old:
+            controller.network_dedup = ReplayWindow(limit=256)
+            await controller.receive(kind, pdu)
     controller.channel.pending = None
-    reasons = {record["reason"] for record in dropped()}
-    assert reasons and reasons <= {"replay_access", "replay_segment", "replay_control"}
-    assert all(record["src"] == 176 for record in dropped())
+    controller._drop_summary(176)
+    records = dropped()
+    assert len(records) == 1
+    reasons = records[0]["reasons"]
+    assert "network_duplicate" in reasons
+    assert set(reasons) - {"network_duplicate"} <= {
+        "replay_access",
+        "replay_segment",
+        "replay_control",
+    }
+    assert all(set(r["sources"]) == {176} for r in reasons.values())
     await peer.finish()
