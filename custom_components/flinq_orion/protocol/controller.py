@@ -62,6 +62,7 @@ class MeshController:
         self.wire_lock = asyncio.Lock()
         self.rx_lock = asyncio.Lock()
         self.network_dedup = ReplayWindow(limit=256)
+        self._drops: dict = {}  # reason -> {"count", "sources"} while a request waits
         self.tx_segments = None
         self.filter_future = None
         self.completed: OrderedDict[tuple, tuple[int, int, int]] = OrderedDict()
@@ -230,31 +231,34 @@ class MeshController:
             if not self.requested:
                 self.requested = True
                 timeout = max(timeout, FIRST_REQUEST_TIMEOUT)
+            self._drops = {}
             try:
                 return await self.channel.request(
                     payload, matcher, timeout=timeout, retries=retries, idempotent=bool(retries)
                 )
             finally:
                 self.device_command = False
+                self._drop_summary(self.destination)
 
     def _dropped(self, reason, msg):
-        """Keep a silently discarded message in the connection history while a request waits.
+        """Count a silently discarded message while a request waits.
 
-        Tells a lamp that did not answer apart from an answer we threw away. Only logged while a
-        request is pending, so relayed duplicates do not flood the history.
+        Tells a lamp that did not answer apart from an answer we threw away. Only counted,
+        per reason, and summarised once per request (`_drop_summary`): unrelated mesh traffic
+        would otherwise flood the connection history and push out the link records.
         """
         if self.channel.pending is None:
             return
-        self.log(
-            {
-                "kind": "rx_dropped",
-                "reason": reason,
-                "src": msg.src,
-                "dst": msg.dst,
-                "seq": msg.seq,
-                "waiting_for": self.destination,
-            }
-        )
+        counts = self._drops.setdefault(reason, {"count": 0, "sources": {}})
+        counts["count"] += 1
+        if len(counts["sources"]) < 8 or msg.src in counts["sources"]:
+            counts["sources"][msg.src] = counts["sources"].get(msg.src, 0) + 1
+
+    def _drop_summary(self, destination):
+        """One connection-history record for the messages discarded during a request."""
+        if self._drops:
+            self.log({"kind": "rx_dropped", "waiting_for": destination, "reasons": self._drops})
+        self._drops = {}
 
     @property
     def request_lock(self):
@@ -268,6 +272,7 @@ class MeshController:
         async with self.rx_lock:
             msg = self.codec.decode(pdu, self.iv_index, proxy=kind == 2)
             if not self.network_dedup.accept(msg.iv_index, msg.src, msg.seq):
+                self._dropped("network_duplicate", msg)
                 return
             self.log(
                 {
